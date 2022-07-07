@@ -18,17 +18,19 @@ import train
 
 from utils import set_seeds, get_device, truncate_tokens_pair
 
+
 class CsvDataset(Dataset):
     """ Dataset Class for CSV file """
     labels = None
-    def __init__(self, file, pipeline=[]): # cvs file and pipeline object
+
+    def __init__(self, file, pipeline=[]):  # cvs file and pipeline object
         Dataset.__init__(self)
         data = []
         with open(file, "r") as f:
             # list of splitted lines : line is also list
             lines = csv.reader(f, delimiter='\t', quotechar=None)
-            for instance in self.get_instances(lines): # instance : tuple of fields
-                for proc in pipeline: # a bunch of pre-processing
+            for instance in self.get_instances(lines):  # instance : tuple of fields
+                for proc in pipeline:  # a bunch of pre-processing
                     instance = proc(instance)
                 data.append(instance)
 
@@ -48,24 +50,26 @@ class CsvDataset(Dataset):
 
 class MRPC(CsvDataset):
     """ Dataset class for MRPC """
-    labels = ("0", "1") # label names
+    labels = ("0", "1")  # label names
+
     def __init__(self, file, pipeline=[]):
         super().__init__(file, pipeline)
 
     def get_instances(self, lines):
-        for line in itertools.islice(lines, 1, None): # skip header
-            yield line[0], line[3], line[4] # label, text_a, text_b
+        for line in itertools.islice(lines, 1, None):  # skip header
+            yield line[0], line[3], line[4]  # label, text_a, text_b
 
 
 class MNLI(CsvDataset):
     """ Dataset class for MNLI """
-    labels = ("contradiction", "entailment", "neutral") # label names
+    labels = ("contradiction", "entailment", "neutral")  # label names
+
     def __init__(self, file, pipeline=[]):
         super().__init__(file, pipeline)
 
     def get_instances(self, lines):
-        for line in itertools.islice(lines, 1, None): # skip header
-            yield line[-1], line[8], line[9] # label, text_a, text_b
+        for line in itertools.islice(lines, 1, None):  # skip header
+            yield line[-1], line[8], line[9]  # label, text_a, text_b
 
 
 def dataset_class(task):
@@ -74,8 +78,9 @@ def dataset_class(task):
     return table[task]
 
 
-class Pipeline():
+class Pipeline(object):
     """ Preprocess Pipeline Class : callable """
+
     def __init__(self):
         super().__init__()
 
@@ -85,10 +90,11 @@ class Pipeline():
 
 class Tokenizing(Pipeline):
     """ Tokenizing sentence pair """
+
     def __init__(self, preprocessor, tokenize):
         super().__init__()
-        self.preprocessor = preprocessor # e.g. text normalization
-        self.tokenize = tokenize # tokenize function
+        self.preprocessor = preprocessor  # e.g. text normalization
+        self.tokenize = tokenize  # tokenize function
 
     def __call__(self, instance):
         label, text_a, text_b = instance
@@ -96,13 +102,14 @@ class Tokenizing(Pipeline):
         label = self.preprocessor(label)
         tokens_a = self.tokenize(self.preprocessor(text_a))
         tokens_b = self.tokenize(self.preprocessor(text_b)) \
-                   if text_b else []
+            if text_b else []
 
         return (label, tokens_a, tokens_b)
 
 
 class AddSpecialTokensWithTruncation(Pipeline):
     """ Add special tokens [CLS], [SEP] with truncation """
+
     def __init__(self, max_len=512):
         super().__init__()
         self.max_len = max_len
@@ -124,9 +131,10 @@ class AddSpecialTokensWithTruncation(Pipeline):
 
 class TokenIndexing(Pipeline):
     """ Convert tokens into token indexes and do zero-padding """
+
     def __init__(self, indexer, labels, max_len=512):
         super().__init__()
-        self.indexer = indexer # function : tokens to indexes
+        self.indexer = indexer  # function : tokens to indexes
         # map from a label name to a label index
         self.label_map = {name: i for i, name in enumerate(labels)}
         self.max_len = max_len
@@ -135,22 +143,23 @@ class TokenIndexing(Pipeline):
         label, tokens_a, tokens_b = instance
 
         input_ids = self.indexer(tokens_a + tokens_b)
-        segment_ids = [0]*len(tokens_a) + [1]*len(tokens_b) # token type ids
-        input_mask = [1]*(len(tokens_a) + len(tokens_b))
+        segment_ids = [0] * len(tokens_a) + [1] * len(tokens_b)  # token type ids
+        input_mask = [1] * (len(tokens_a) + len(tokens_b))
 
         label_id = self.label_map[label]
 
         # zero padding
         n_pad = self.max_len - len(input_ids)
-        input_ids.extend([0]*n_pad)
-        segment_ids.extend([0]*n_pad)
-        input_mask.extend([0]*n_pad)
+        input_ids.extend([0] * n_pad)
+        segment_ids.extend([0] * n_pad)
+        input_mask.extend([0] * n_pad)
 
         return (input_ids, segment_ids, input_mask, label_id)
 
 
 class Classifier(nn.Module):
     """ Classifier with Transformer """
+
     def __init__(self, cfg, n_labels):
         super().__init__()
         self.transformer = models.Transformer(cfg)
@@ -166,13 +175,14 @@ class Classifier(nn.Module):
         logits = self.classifier(self.drop(pooled_h))
         return logits
 
-#pretrain_file='../uncased_L-12_H-768_A-12/bert_model.ckpt',
-#pretrain_file='../exp/bert/pretrain_100k/model_epoch_3_steps_9732.pt',
+
+# pretrain_file='../uncased_L-12_H-768_A-12/bert_model.ckpt',
+# pretrain_file='../exp/bert/pretrain_100k/model_epoch_3_steps_9732.pt',
 
 def main(task='mrpc',
          train_cfg='config/train_mrpc.json',
          model_cfg='config/bert_base.json',
-         data_file='../glue/MRPC/train.tsv',
+         data_file='/data/glue/MRPC/train.tsv',
          model_file=None,
          pretrain_file='../uncased_L-12_H-768_A-12/bert_model.ckpt',
          data_parallel=True,
@@ -180,14 +190,13 @@ def main(task='mrpc',
          save_dir='../exp/bert/mrpc',
          max_len=128,
          mode='train'):
-
     cfg = train.Config.from_json(train_cfg)
     model_cfg = models.Config.from_json(model_cfg)
 
     set_seeds(cfg.seed)
 
     tokenizer = tokenization.FullTokenizer(vocab_file=vocab, do_lower_case=True)
-    TaskDataset = dataset_class(task) # task dataset class according to the task
+    TaskDataset = dataset_class(task)  # task dataset class according to the task
     pipeline = [Tokenizing(tokenizer.convert_to_unicode, tokenizer.tokenize),
                 AddSpecialTokensWithTruncation(max_len),
                 TokenIndexing(tokenizer.convert_tokens_to_ids,
@@ -205,7 +214,7 @@ def main(task='mrpc',
                             save_dir, get_device())
 
     if mode == 'train':
-        def get_loss(model, batch, global_step): # make sure loss is a scalar tensor
+        def get_loss(model, batch, global_step):  # make sure loss is a scalar tensor
             input_ids, segment_ids, input_mask, label_id = batch
             logits = model(input_ids, segment_ids, input_mask)
             loss = criterion(logits, label_id)
@@ -218,7 +227,7 @@ def main(task='mrpc',
             input_ids, segment_ids, input_mask, label_id = batch
             logits = model(input_ids, segment_ids, input_mask)
             _, label_pred = logits.max(1)
-            result = (label_pred == label_id).float() #.cpu().numpy()
+            result = (label_pred == label_id).float()  # .cpu().numpy()
             accuracy = result.mean()
             return accuracy, result
 
