@@ -12,3 +12,4 @@ dstc7.egg-info/*
 *.ipynb
 
 logs/
+models/
