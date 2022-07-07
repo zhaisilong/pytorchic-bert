@@ -11,4 +11,3 @@ __pycache__
 dstc7.egg-info/*
 *.ipynb
 
-logs/
