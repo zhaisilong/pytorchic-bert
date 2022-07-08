@@ -52,9 +52,9 @@ class Trainer(object):
         global_step = 0  # global iteration steps regardless of epochs
         for e in range(self.cfg.n_epochs):
             loss_sum = 0.  # the sum of iteration losses to get average loss in every epoch
-            iter_bar = tqdm(self.data_iter, desc='Iter (loss=X.XXX)')
+            iter_bar = tqdm(self.data_iter)
             for i, batch in enumerate(iter_bar):
-                batch = [t.to(self.device) for t in batch]
+                batch = [t.to(self.device) for t in batch]  # 数据送到 device
 
                 self.optimizer.zero_grad()
                 loss = get_loss(model, batch, global_step).mean()  # mean() for Data Parallelism
@@ -63,7 +63,7 @@ class Trainer(object):
 
                 global_step += 1
                 loss_sum += loss.item()
-                iter_bar.set_description('Iter (loss=%5.3f)' % loss.item())
+                iter_bar.set_description(f'Epoch: {e}--loss: {loss.item():.3f}--Step: {global_step}--Iter: {i}')
 
                 if global_step % self.cfg.save_steps == 0:  # save
                     self.save(global_step)

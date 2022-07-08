@@ -8,7 +8,13 @@ import logging
 
 import numpy as np
 import torch
+from itertools import (takewhile, repeat)
 
+def iter_count(file_name):
+    buffer = 1024 * 1024
+    with open(file_name) as f:
+        buf_gen = takewhile(lambda x: x, (f.read(buffer) for _ in repeat(None)))
+        return sum(buf.count('\n') for buf in buf_gen)
 
 def set_seeds(seed):
     "set random seeds"

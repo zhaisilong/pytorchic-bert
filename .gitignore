@@ -13,3 +13,4 @@ dstc7.egg-info/*
 
 logs/
 models/
+data/

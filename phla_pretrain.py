@@ -2,10 +2,11 @@
 # (Strongly inspired by original Google BERT code and Hugging Face's code)
 
 """ Pretrain transformer with Masked LM and Sentence Classification """
-
+from collections import OrderedDict
 from random import randint, shuffle
 from random import random as rand
 import fire
+import pandas as pd
 
 import torch
 import torch.nn as nn
@@ -17,6 +18,21 @@ import optim
 import train
 
 from utils import set_seeds, get_device, get_random_word, truncate_tokens_pair
+
+DEBUG = False
+
+import logging
+logger = logging.getLogger()
+logger.setLevel(logging.DEBUG)
+
+
+def debug(f, *args, **kwargs):
+    if DEBUG:
+        print('debugging')
+        f(*args, **kwargs)
+        exit(0)
+    else:
+        pass
 
 
 # Input file format :
@@ -33,6 +49,53 @@ def seek_random_offset(f, back_margin=2000):
     max_offset = f.tell() - back_margin
     f.seek(randint(0, max_offset), 0)
     f.readline()  # throw away an incomplete sentence
+
+
+class PhlaPairDataLoader():
+    """ Load Peptide HLA pair (sequential or random order) from corpus """
+
+    def __init__(self, file, batch_size, tokenize, max_len, short_sampling_prob=0.1, pipeline=[]):
+        super().__init__()
+        self.df = pd.read_csv(file, index_col=0)
+        self.num_data = len(self.df)
+        self.tokenize = tokenize  # tokenize function
+        self.max_len = max_len  # maximum length of tokens
+        self.short_sampling_prob = short_sampling_prob
+        self.pipeline = pipeline
+        self.batch_size = batch_size
+        self.i = 0
+
+    def cycle_idx(self, i, col):
+        if abs(i) < self.num_data:
+            return self.df.at[i, col]
+        else:
+            return self.df.at[i % self.num_data, col]
+
+
+    def __iter__(self):  # iterator to load data
+        while True:
+            batch = []
+            for j in range(self.batch_size):
+                # print(f'iloc: {self.i}')
+                is_next = rand() < 0.5
+                tokens_a = list(self.cycle_idx(self.i, 'peptide'))
+                if is_next:
+                    tokens_b = list(self.cycle_idx(self.i, 'HLA_sequence'))
+                else:
+                    tokens_b = list(self.cycle_idx(randint(0, self.num_data - 1), 'HLA_sequence'))
+                instance = (is_next, tokens_a, tokens_b)
+
+                for proc in self.pipeline:
+                    instance = proc(instance)
+
+                batch.append(instance)
+                self.i += 1
+
+
+
+            # To Tensor
+            batch_tensors = [torch.tensor(x, dtype=torch.long) for x in zip(*batch)]
+            yield batch_tensors
 
 
 class SentPairDataLoader():
@@ -198,16 +261,16 @@ class BertModel4Pretrain(nn.Module):
         return logits_lm, logits_clsf
 
 
-def main(train_cfg='config/pretrain.json',
-         model_cfg='config/bert_base.json',
-         data_file='../tbc/books_large_all.txt',
+def main(train_cfg='config/phla_pretrain.json',
+         model_cfg='config/phla_bert.json',
+         data_file='data/all_positive.csv',
          model_file=None,
          data_parallel=True,
-         vocab='../uncased_L-12_H-768_A-12/vocab.txt',
-         save_dir='../exp/bert/pretrain',
-         log_dir='../exp/bert/pretrain/runs',
-         max_len=512,
-         max_pred=20,
+         vocab='data/vocab.txt',
+         save_dir='models',
+         log_dir='logs',
+         max_len=52,
+         max_pred=8,
          mask_prob=0.15):
     cfg = train.Config.from_json(train_cfg)
     model_cfg = models.Config.from_json(model_cfg)
@@ -222,11 +285,23 @@ def main(train_cfg='config/pretrain.json',
                                     list(tokenizer.vocab.keys()),
                                     tokenizer.convert_tokens_to_ids,
                                     max_len)]
-    data_iter = SentPairDataLoader(data_file,
+    data_iter = PhlaPairDataLoader(data_file,
                                    cfg.batch_size,
                                    tokenize,
                                    max_len,
                                    pipeline=pipeline)
+
+    if DEBUG:
+        rdict = {v: k for k, v in tokenizer.vocab.items()}
+        s = 0
+        for i in data_iter:
+            for id in i[0][1].tolist():
+                print(rdict[id])  # 有序字典
+            print('is_next:', i[-1])
+            print(f'step: {s}')
+            s += 1
+            break
+        exit(0)
 
     model = BertModel4Pretrain(model_cfg)
     criterion1 = nn.CrossEntropyLoss(reduction='none')
