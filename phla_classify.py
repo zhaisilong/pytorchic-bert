@@ -17,8 +17,10 @@ import tokenization
 import models
 import optim
 import train
+from rich.progress import Progress, SpinnerColumn, TimeElapsedColumn
+from utils import set_seeds, get_device, truncate_tokens_pair, iter_count, get_logger, pbar
 
-from utils import set_seeds, get_device, truncate_tokens_pair, iter_count
+log = get_logger(__name__)
 
 
 class CsvDataset(Dataset):
@@ -31,11 +33,14 @@ class CsvDataset(Dataset):
         with open(file, "r") as f:
             # list of splitted lines : line is also list
             lines = csv.reader(f, delimiter=',', quotechar=None)
-            with tqdm(self.get_instances(lines), total=iter_count(file)) as pbar:
-                for instance in pbar:  # instance : tuple of fields
-                    for proc in pipeline:  # a bunch of pre-processing
-                        instance = proc(instance)
-                    data.append(instance)
+
+            @pbar(self.get_instances(lines), totol=iter_count(file), description='Loading data')
+            def do(i, pipeline, data):
+                for proc in pipeline:  # a bunch of pre-processing
+                    i = proc(i)
+                data.append(i)
+
+            do(pipeline=pipeline, data=data)
 
         # To Tensors
         self.tensors = [torch.tensor(x, dtype=torch.long) for x in zip(*data)]
@@ -60,7 +65,8 @@ class PHLA(CsvDataset):
 
     def get_instances(self, lines):
         for line in itertools.islice(lines, 1, None):  # skip header
-            yield line[4], line[1], line[5]  # label, text_a, text_b
+            # label, text_a, text_b
+            yield ' '.join(list(line[4])), ' '.join(list(line[1])), ' '.join(list(line[5]))  # 手动分词
 
 
 def dataset_class(task):
@@ -91,7 +97,9 @@ class Tokenizing(Pipeline):
         label, text_a, text_b = instance
 
         label = self.preprocessor(label)
+
         tokens_a = self.tokenize(self.preprocessor(text_a))
+
         tokens_b = self.tokenize(self.preprocessor(text_b)) \
             if text_b else []
 
@@ -170,27 +178,31 @@ class Classifier(nn.Module):
 # pretrain_file='../uncased_L-12_H-768_A-12/bert_model.ckpt',
 # pretrain_file='../exp/bert/pretrain_100k/model_epoch_3_steps_9732.pt',
 
+DEBUG = True
+
 def main(task='phla',
          train_cfg='config/phla_train.json',
          model_cfg='config/phla_bert.json',
          data_file='data/finetune.csv',
          model_file=None,
          pretrain_file='models/model_steps_20000.pt',
-         # model_file='exp/model_steps_346.pt',
+         mode='train',
+         # data_file='data/independent_set.csv',
+         # model_file='exp/model_steps_70000.pt',
          # pretrain_file=None,
+         # mode='eval',
          data_parallel=True,
          vocab='data/vocab.txt',
          save_dir='exp',
-         max_len=52,
-         mode='eval'):
-    print(f'{time.asctime()}: loading config')
+         max_len=52,):
+    log.info('loading config...')
     cfg = train.Config.from_json(train_cfg)
     model_cfg = models.Config.from_json(model_cfg)
 
     set_seeds(cfg.seed)
 
-    print(f'{time.asctime()}: loading data')
-    tokenizer = tokenization.FullTokenizer(vocab_file=vocab, do_lower_case=True)
+    log.info(f'Loading Data from {data_file}...')
+    tokenizer = tokenization.FullTokenizer(vocab_file=vocab, do_lower_case=False)
     TaskDataset = dataset_class(task)  # task dataset class according to the task
     pipeline = [Tokenizing(tokenizer.convert_to_unicode, tokenizer.tokenize),
                 AddSpecialTokensWithTruncation(max_len),
@@ -198,10 +210,12 @@ def main(task='phla',
                               TaskDataset.labels, max_len)]
     dataset = TaskDataset(data_file, pipeline)
     data_iter = DataLoader(dataset, batch_size=cfg.batch_size, shuffle=True)
-    print(f'{time.asctime()}: loading model')
+
+
+    log.info(f'loading model from {model_file}...')
     model = Classifier(model_cfg, len(TaskDataset.labels))
     criterion = nn.CrossEntropyLoss()
-    print(f'{time.asctime()}: start training')
+    log.info('start training...')
     trainer = train.Trainer(cfg,
                             model,
                             data_iter,
@@ -219,12 +233,15 @@ def main(task='phla',
 
     elif mode == 'eval':
         def evaluate(model, batch):
+
             input_ids, segment_ids, input_mask, label_id = batch
             logits = model(input_ids, segment_ids, input_mask)
             _, label_pred = logits.max(1)
             result = (label_pred == label_id).float()  # .cpu().numpy()
             accuracy = result.mean()
+
             return accuracy, result
+
 
         results = trainer.eval(evaluate, model_file, data_parallel)
         total_accuracy = torch.cat(results).mean().item()

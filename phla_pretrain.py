@@ -277,7 +277,7 @@ def main(train_cfg='config/phla_pretrain.json',
 
     set_seeds(cfg.seed)
 
-    tokenizer = tokenization.FullTokenizer(vocab_file=vocab, do_lower_case=True)
+    tokenizer = tokenization.FullTokenizer(vocab_file=vocab, do_lower_case=False)  # 注意这里要 False
     tokenize = lambda x: tokenizer.tokenize(tokenizer.convert_to_unicode(x))
 
     pipeline = [Preprocess4Pretrain(max_pred,
