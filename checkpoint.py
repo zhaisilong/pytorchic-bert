@@ -3,7 +3,7 @@
 """ Load a checkpoint file of pretrained transformer to a model in pytorch """
 
 import numpy as np
-import tensorflow as tf
+# import tensorflow as tf
 import torch
 #import ipdb
 #from models import *

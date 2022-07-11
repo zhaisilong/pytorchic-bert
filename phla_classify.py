@@ -12,15 +12,18 @@ import fire
 import torch
 import torch.nn as nn
 from torch.utils.data import Dataset, DataLoader
-
+from torchmetrics.functional import auroc
 import tokenization
 import models
 import optim
 import train
 from rich.progress import Progress, SpinnerColumn, TimeElapsedColumn
 from utils import set_seeds, get_device, truncate_tokens_pair, iter_count, get_logger, pbar
+import logging
+from torch.nn.functional import softmax
 
 log = get_logger(__name__)
+log.setLevel(logging.INFO)
 
 
 class CsvDataset(Dataset):
@@ -240,12 +243,16 @@ def main(task='phla',
             result = (label_pred == label_id).float()  # .cpu().numpy()
             accuracy = result.mean()
 
-            return accuracy, result
+            return accuracy, result, softmax(logits, dim=1), label_id
 
 
-        results = trainer.eval(evaluate, model_file, data_parallel)
+        results, logits, labels = trainer.eval(evaluate, model_file, data_parallel)
         total_accuracy = torch.cat(results).mean().item()
-        print('Accuracy:', total_accuracy)
+        log.debug(torch.cat(logits))
+        log.debug(torch.cat(labels))
+        auc_score = auroc(torch.cat(logits), torch.cat(labels),  num_classes=2)
+        log.info(f'Accuracy: {total_accuracy}')
+        log.info(f'AUC_Score: {auc_score}')
 
 
 if __name__ == '__main__':

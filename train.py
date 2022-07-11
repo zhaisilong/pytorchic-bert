@@ -5,12 +5,17 @@
 import os
 import json
 from typing import NamedTuple
+
+from rich.progress import Progress, SpinnerColumn, TimeElapsedColumn
 from tqdm import tqdm
 
 import torch
 import torch.nn as nn
 
 import checkpoint
+from utils import get_logger
+
+log = get_logger(__name__)
 
 
 class Config(NamedTuple):
@@ -69,12 +74,12 @@ class Trainer(object):
                     self.save(global_step)
 
                 if self.cfg.total_steps and self.cfg.total_steps < global_step:
-                    print('Epoch %d/%d : Average Loss %5.3f' % (e + 1, self.cfg.n_epochs, loss_sum / (i + 1)))
-                    print('The Total Steps have been reached.')
+                    log.info('Epoch %d/%d : Average Loss %5.3f' % (e + 1, self.cfg.n_epochs, loss_sum / (i + 1)))
+                    log.info('The Total Steps have been reached.')
                     self.save(global_step)  # save and finish when global_steps reach total_steps
                     return
 
-            print('Epoch %d/%d : Average Loss %5.3f' % (e + 1, self.cfg.n_epochs, loss_sum / (i + 1)))
+            log.info('Epoch %d/%d : Average Loss %5.3f' % (e + 1, self.cfg.n_epochs, loss_sum / (i + 1)))
         self.save(global_step)
 
     def eval(self, evaluate, model_file, data_parallel=True):
@@ -86,24 +91,27 @@ class Trainer(object):
             model = nn.DataParallel(model)
 
         results = []  # prediction results
-        iter_bar = tqdm(self.data_iter, desc='Iter (loss=X.XXX)')
-        for batch in iter_bar:
-            batch = [t.to(self.device) for t in batch]
-            with torch.no_grad():  # evaluation without gradient calculation
-                accuracy, result = evaluate(model, batch)  # accuracy to print
-            results.append(result)
+        logits = []
+        labels = []
+        with Progress(SpinnerColumn(), *Progress.get_default_columns(), "Elapsed:", TimeElapsedColumn()) as progress:
+            for batch in progress.track(self.data_iter, description='Iter', total=len(self.data_iter)):
+                batch = [t.to(self.device) for t in batch]
+                with torch.no_grad():  # evaluation without gradient calculation
+                    accuracy, result, logit, label_id = evaluate(model, batch)  # accuracy to print
+                results.append(result)
+                logits.append(logit)
+                labels.append(label_id)
 
-            iter_bar.set_description('Iter(acc=%5.3f)' % accuracy)
-        return results
+        return results, logits, labels
 
     def load(self, model_file, pretrain_file):
         """ load saved model or pretrained transformer (a part of model) """
         if model_file:
-            print('Loading the model from', model_file)
+            log.info(f'Loading the model from {model_file}')
             self.model.load_state_dict(torch.load(model_file))
 
         elif pretrain_file:  # use pretrained transformer
-            print('Loading the pretrained model from', pretrain_file)
+            log.info('Loading the pretrained model from', pretrain_file)
             if pretrain_file.endswith('.ckpt'):  # checkpoint file in tensorflow
                 checkpoint.load_model(self.model.transformer, pretrain_file)
             elif pretrain_file.endswith('.pt'):  # pretrain model file in pytorch
